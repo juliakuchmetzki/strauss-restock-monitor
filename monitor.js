@@ -58,44 +58,63 @@ async function checkProductAvailability() {
     // HTML parsen
     const $ = cheerio.load(response.data);
 
-    // Verfügbarkeit prüfen - verschiedene Selektoren
+    // Verfügbarkeit prüfen - Strauss.com spezifische Erkennung
     let isAvailable = false;
     let statusText = 'Unbekannt';
 
-    // Methode 1: Nach "In den Warenkorb" Button suchen
-    const addToCartButton = $('button[data-add-to-cart], .add-to-cart, button:contains("In den Warenkorb")');
-    if (addToCartButton.length > 0 && !addToCartButton.is(':disabled')) {
-      isAvailable = true;
-      statusText = 'Verfügbar';
-    }
+    // Gesamten Seiteninhalt als Text für Suche vorbereiten
+    const pageText = $('body').text().toLowerCase();
+    const pageHtml = response.data.toLowerCase();
 
-    // Methode 2: Nach Verfügbarkeitstext suchen
-    const availabilityText = $('.availability, .product-availability, [data-availability]').text().toLowerCase();
-    if (availabilityText.includes('verfügbar') && !availabilityText.includes('nicht') && !availabilityText.includes('ausverkauft')) {
-      isAvailable = true;
-      statusText = 'Verfügbar';
-    }
-
-    // Methode 3: Nach "Nicht verfügbar" oder "Ausverkauft" suchen
-    if (availabilityText.includes('nicht verfügbar') ||
-        availabilityText.includes('ausverkauft') ||
-        availabilityText.includes('nicht lieferbar')) {
+    // Methode 1: Nach spezifischen Strauss.com Texten suchen
+    // "Nicht lieferbar" = Produkt ist ausverkauft
+    if (pageText.includes('nicht lieferbar') || pageHtml.includes('nicht lieferbar')) {
       isAvailable = false;
-      statusText = 'Nicht verfügbar';
+      statusText = 'Nicht lieferbar';
     }
 
-    // Methode 4: Nach Stock-Status im JSON-LD suchen
-    const jsonLdScript = $('script[type="application/ld+json"]').html();
-    if (jsonLdScript) {
-      try {
-        const jsonData = JSON.parse(jsonLdScript);
-        if (jsonData.offers && jsonData.offers.availability) {
-          const availability = jsonData.offers.availability.toLowerCase();
-          isAvailable = availability.includes('instock');
-          statusText = isAvailable ? 'Verfügbar' : 'Nicht verfügbar';
-        }
-      } catch (e) {
-        // JSON parsing fehlgeschlagen, ignorieren
+    // "Die Variante ist leider ausverkauft"
+    if (pageText.includes('ausverkauft') || pageHtml.includes('articlenoavailable')) {
+      isAvailable = false;
+      statusText = 'Ausverkauft';
+    }
+
+    // Methode 2: availabilityState im JavaScript-Code suchen
+    // availabilityState: 0 = nicht verfügbar, 1 = verfügbar
+    const availabilityStateMatch = pageHtml.match(/"availabilitystate"\s*:\s*(\d+)/i);
+    if (availabilityStateMatch) {
+      const state = parseInt(availabilityStateMatch[1]);
+      if (state === 0) {
+        isAvailable = false;
+        statusText = 'Nicht verfügbar (State: 0)';
+      } else if (state === 1 || state > 0) {
+        isAvailable = true;
+        statusText = 'Verfügbar (State: ' + state + ')';
+      }
+    }
+
+    // Methode 3: Positive Indikatoren (überschreiben nur wenn eindeutig verfügbar)
+    // "In den Warenkorb" Button der nicht disabled ist
+    const addToCartButton = $('button:contains("In den Warenkorb"), button:contains("Hinzufügen")');
+    if (addToCartButton.length > 0) {
+      const buttonHtml = addToCartButton.html();
+      const buttonDisabled = addToCartButton.attr('disabled') || addToCartButton.hasClass('disabled');
+
+      // Nur als verfügbar markieren wenn Button existiert UND nicht disabled ist
+      if (!buttonDisabled && !pageText.includes('nicht lieferbar') && !pageText.includes('ausverkauft')) {
+        isAvailable = true;
+        statusText = 'Verfügbar';
+      }
+    }
+
+    // Methode 4: "Lieferbar" oder "Auf Lager" als positive Indikatoren
+    if ((pageText.includes('lieferbar') && !pageText.includes('nicht lieferbar')) ||
+        pageText.includes('auf lager') ||
+        pageText.includes('sofort verfügbar')) {
+      // Nur wenn KEINE negativen Indikatoren vorhanden
+      if (!pageText.includes('nicht lieferbar') && !pageText.includes('ausverkauft')) {
+        isAvailable = true;
+        statusText = 'Verfügbar';
       }
     }
 
