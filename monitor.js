@@ -59,62 +59,46 @@ async function checkProductAvailability() {
     const $ = cheerio.load(response.data);
 
     // Verfügbarkeit prüfen - Strauss.com spezifische Erkennung
-    let isAvailable = false;
-    let statusText = 'Unbekannt';
+    let isAvailable = true; // Standard: verfügbar, bis Gegenteil bewiesen
+    let statusText = 'Verfügbar';
 
     // Gesamten Seiteninhalt als Text für Suche vorbereiten
     const pageText = $('body').text().toLowerCase();
     const pageHtml = response.data.toLowerCase();
 
-    // Methode 1: Nach spezifischen Strauss.com Texten suchen
-    // "Nicht lieferbar" = Produkt ist ausverkauft
+    // ZUERST: Nach NEGATIVEN Indikatoren suchen (haben Priorität!)
+    // Methode 1: "Nicht lieferbar" = definitiv ausverkauft
     if (pageText.includes('nicht lieferbar') || pageHtml.includes('nicht lieferbar')) {
       isAvailable = false;
-      statusText = 'Nicht lieferbar';
+      statusText = 'Nicht lieferbar ❌';
     }
 
-    // "Die Variante ist leider ausverkauft"
-    if (pageText.includes('ausverkauft') || pageHtml.includes('articlenoavailable')) {
+    // Methode 2: "Ausverkauft" = definitiv nicht verfügbar
+    if (pageText.includes('ausverkauft') || pageText.includes('nicht mehr verfügbar')) {
       isAvailable = false;
-      statusText = 'Ausverkauft';
+      statusText = 'Ausverkauft ❌';
     }
 
-    // Methode 2: availabilityState im JavaScript-Code suchen
-    // availabilityState: 0 = nicht verfügbar, 1 = verfügbar
-    const availabilityStateMatch = pageHtml.match(/"availabilitystate"\s*:\s*(\d+)/i);
-    if (availabilityStateMatch) {
-      const state = parseInt(availabilityStateMatch[1]);
-      if (state === 0) {
+    // Methode 3: Spezielle Strauss.com Meldungen
+    if (pageText.includes('die variante ist leider ausverkauft')) {
+      isAvailable = false;
+      statusText = 'Variante ausverkauft ❌';
+    }
+
+    // DANACH: Wenn KEINE negativen Indikatoren, nach positiven suchen
+    if (isAvailable) {
+      // Positive Indikatoren bestätigen Verfügbarkeit
+      if (pageText.includes('lieferzeit') ||
+          pageText.includes('werktage') ||
+          pageText.includes('auf lager') ||
+          pageText.includes('sofort verfügbar') ||
+          pageText.includes('lieferung nur solange der vorrat reicht')) {
+        isAvailable = true;
+        statusText = 'Verfügbar ✅';
+      } else {
+        // Kein klarer Indikator gefunden
         isAvailable = false;
-        statusText = 'Nicht verfügbar (State: 0)';
-      } else if (state === 1 || state > 0) {
-        isAvailable = true;
-        statusText = 'Verfügbar (State: ' + state + ')';
-      }
-    }
-
-    // Methode 3: Positive Indikatoren (überschreiben nur wenn eindeutig verfügbar)
-    // "In den Warenkorb" Button der nicht disabled ist
-    const addToCartButton = $('button:contains("In den Warenkorb"), button:contains("Hinzufügen")');
-    if (addToCartButton.length > 0) {
-      const buttonHtml = addToCartButton.html();
-      const buttonDisabled = addToCartButton.attr('disabled') || addToCartButton.hasClass('disabled');
-
-      // Nur als verfügbar markieren wenn Button existiert UND nicht disabled ist
-      if (!buttonDisabled && !pageText.includes('nicht lieferbar') && !pageText.includes('ausverkauft')) {
-        isAvailable = true;
-        statusText = 'Verfügbar';
-      }
-    }
-
-    // Methode 4: "Lieferbar" oder "Auf Lager" als positive Indikatoren
-    if ((pageText.includes('lieferbar') && !pageText.includes('nicht lieferbar')) ||
-        pageText.includes('auf lager') ||
-        pageText.includes('sofort verfügbar')) {
-      // Nur wenn KEINE negativen Indikatoren vorhanden
-      if (!pageText.includes('nicht lieferbar') && !pageText.includes('ausverkauft')) {
-        isAvailable = true;
-        statusText = 'Verfügbar';
+        statusText = 'Status unklar ⚠️';
       }
     }
 
